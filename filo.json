@@ -1,0 +1,10 @@
+{
+  "ad": "Merkezi Sentinel",
+  "kategori": "Bakım & Altyapı",
+  "ozet": "Ekosistemdeki mevcut ve gelecekteki tüm projeleri otomatik keşfeden, uçtan uca çıktı ve kalp atışı (heartbeat) denetimi yapan, sessiz ölümleri anında doğrudan Gmail/Telegram ile bildiren merkezi güvenlik ve canlılık gözcüsü.",
+  "eleme": "Her saat başı veya tetiklendiğinde tüm projeleri tarar; cron'lar çıktı üretti mi, onay mailleri gitti mi, webhook ve canlı botlar ayakta mı, token'ların süresi doldu mu kontrol eder. Sorun olduğunda doğrudan Gmail REST API üzerinden birincil gelen kutusuna net aksiyon butonlu alarm gönderir.",
+  "model": "Kural ve derin entegrasyon tabanlı (Typefully API, Gmail REST API, Railway GraphQL, Notion, ManyChat). Sıfır yapay zeka maliyeti, maksimum güvenilirlik.",
+  "sunum": "Cam efektli modern canlı web paneli (dashboard) + acil durumlarda doğrudan birincil Gmail gelen kutusuna HTML alarm kartı.",
+  "durum": "aktif",
+  "dahil_et": true
+}
