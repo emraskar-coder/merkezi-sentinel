@@ -7,6 +7,7 @@ hiçbir manuel yapılandırma gerektirmeden otomatik olarak sınıflandırır ve
 import os
 import json
 import logging
+import requests
 from pathlib import Path
 from dataclasses import dataclass, field
 from config import SentinelConfig
@@ -75,6 +76,9 @@ class ProjectRegistry:
             except Exception as e:
                 logger.warning(f"Manifest kaydedilemedi: {e}")
 
+            # 3. Railway API üzerinden dinamik servis keşfi ve zenginleştirme yap
+            self._discover_railway_cloud_services()
+
             logger.info(f"Registry yerel taraması tamamlandı: {len(self._projects)} proje keşfedildi.")
             return self._projects
 
@@ -100,12 +104,119 @@ class ProjectRegistry:
                             custom_config=v.get("custom_config", {})
                         )
                 logger.info(f"Registry bulut/manifest yüklemesi tamamlandı: {len(self._projects)} proje yüklendi.")
-                return self._projects
             except Exception as e:
                 logger.error(f"Manifest okuma hatası: {e}")
 
-        logger.error(f"Projeler dizini veya manifest bulunamadı: {self.projects_dir}")
+        # Bulut ortamında Railway servislerini dinamik olarak tara ve yeni servisleri ekle
+        self._discover_railway_cloud_services()
         return self._projects
+
+    def _discover_railway_cloud_services(self):
+        """Railway GraphQL API üzerinden kullanıcının projelerindeki yeni/mevcut servisleri dinamik keşfeder."""
+        rw_token = SentinelConfig.RAILWAY_TOKEN
+        if not rw_token:
+            return
+
+        headers = {
+            "Authorization": f"Bearer {rw_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0",
+        }
+        # Bilinen veya aktif Railway proje ID'leri
+        pids = ["f81380ac-964f-47e6-8923-94a37b9922d4", "7e007c56-dd47-43ec-9eab-6f574f33d8ad"]
+        q = """
+        query GetProj($id: String!) {
+          project(id: $id) {
+            id
+            name
+            services {
+              edges {
+                node {
+                  id
+                  name
+                  serviceInstances {
+                    edges {
+                      node {
+                        cronSchedule
+                        startCommand
+                        domains {
+                          serviceDomains {
+                            domain
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        for pid in pids:
+            try:
+                r = requests.post(
+                    "https://backboard.railway.com/graphql/v2",
+                    headers=headers,
+                    json={"query": q, "variables": {"id": pid}},
+                    timeout=8
+                )
+                if r.status_code == 200:
+                    services = r.json().get("data", {}).get("project", {}).get("services", {}).get("edges", [])
+                    for s in services:
+                        s_node = s.get("node", {})
+                        s_name = s_node.get("name")
+                        if not s_name or s_name == "merkezi-sentinel":
+                            continue
+
+                        inst_edges = s_node.get("serviceInstances", {}).get("edges", [])
+                        cron = None
+                        start_cmd = None
+                        domain = None
+                        if inst_edges:
+                            inst_node = inst_edges[0].get("node", {})
+                            cron = inst_node.get("cronSchedule")
+                            start_cmd = inst_node.get("startCommand")
+                            s_domains = inst_node.get("domains", {}).get("serviceDomains", [])
+                            if s_domains:
+                                domain = s_domains[0].get("domain")
+
+                        p_type = "CRON_PIPELINE" if cron else ("WEB_SERVICE" if domain else "UNKNOWN")
+                        h_url = f"https://{domain}/health" if domain else None
+
+                        # Var olan projeyi zenginleştir veya yeni eklenen projeyi kaydet
+                        matched_key = None
+                        for k in self._projects.keys():
+                            if k.lower().replace("_", "-") == s_name.lower().replace("_", "-") or s_name.lower() in k.lower():
+                                matched_key = k
+                                break
+
+                        if matched_key:
+                            proj = self._projects[matched_key]
+                            proj.has_railway = True
+                            if cron and not proj.cron_schedule:
+                                proj.cron_schedule = cron
+                            if domain and not proj.health_url:
+                                proj.health_url = h_url
+                            if p_type != "UNKNOWN":
+                                proj.project_type = p_type
+                        else:
+                            # Tamamen yeni eklenmiş bir Railway servisi! Otomatik dahil et!
+                            self._projects[s_name] = ProjectMetadata(
+                                name=s_name,
+                                dir_path=Path(""),
+                                title=s_name.replace("-", " ").title(),
+                                category="Railway Servisleri",
+                                project_type=p_type,
+                                status="active",
+                                cron_schedule=cron,
+                                start_command=start_cmd,
+                                has_railway=True,
+                                health_url=h_url,
+                            )
+                            logger.info(f"✨ Railway üzerinden yeni servis otomatik keşfedildi: {s_name}")
+            except Exception as e:
+                logger.warning(f"Railway dinamik servis keşif hatası ({pid}): {e}")
 
     def _inspect_project(self, name: str, path: Path) -> ProjectMetadata:
         title = name.replace("_", " ")
